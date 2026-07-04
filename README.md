@@ -29,4 +29,4 @@
 
 ### One-Line Install (Recommended)
 ```bash
-curl -sSL https://raw.githubusercontent.com/yourusername/wallpaper-cache/main/install_wca.sh | bash
+curl -sSL https://raw.githubusercontent.com/avraniel/wallpaper-cache/main/install_wca.sh | bash
