@@ -1,8 +1,7 @@
 #!/bin/bash
 # ============================================================
-# Wallpaper Cache - Universal Installer v2.3
-# Supports: Niri, KDE Plasma, KDE Plasma Caelestia
-# Now with automatic Bash aliases and Fish abbreviations
+# Wallpaper Cache - Complete Installer v8.0
+# Includes: dependencies, script, autostart, fish abbreviations
 # ============================================================
 
 set -e
@@ -17,209 +16,93 @@ CYAN='\033[0;36m'
 NC='\033[0m'
 
 # Version
-SCRIPT_VERSION="2.3"
-APP_VERSION="7.9"
+VERSION="8.0"
 
-# Installation paths
+# Paths
 INSTALL_DIR="$HOME/Downloads"
 VENV_DIR="$HOME/wallpaper-cache-env"
 CONFIG_DIR="$HOME/.config/wallpaper_cache"
-AUTOSTART_DIR="$HOME/.config/autostart"
 BIN_DIR="$HOME/.local/bin"
-SERVICE_DIR="$HOME/.config/systemd/user"
-NIRI_CONFIG="$HOME/.config/niri/config.kdl"
+AUTOSTART_DIR="$HOME/.config/autostart"
 FISH_CONFIG="$HOME/.config/fish/config.fish"
-BASH_CONFIG="$HOME/.bashrc"
-BASH_ALIASES="$HOME/.bash_aliases"
 
-# Colors for output
+# Colors
 print_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
 print_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
 print_warning() { echo -e "${YELLOW}[WARNING]${NC} $1"; }
 print_error() { echo -e "${RED}[ERROR]${NC} $1"; }
-print_header() { echo -e "${CYAN}$1${NC}"; }
-print_question() { echo -e "${MAGENTA}[?]${NC} $1"; }
 
 # ============================================================
-# Detection Functions
+# Main Installation
 # ============================================================
 
-detect_desktop() {
-    # Check for Niri
-    if pgrep -x "niri" > /dev/null 2>&1; then
-        echo "niri"
-        return
-    fi
-    
-    # Check for KDE Plasma
-    if [ -n "$XDG_CURRENT_DESKTOP" ]; then
-        if [[ "$XDG_CURRENT_DESKTOP" == *"KDE"* ]] || [[ "$XDG_CURRENT_DESKTOP" == *"Plasma"* ]]; then
-            # Check if Caelestia
-            if [[ "$XDG_CURRENT_DESKTOP" == *"Caelestia"* ]] || [ -f "/usr/share/plasma/shells/org.kde.caelestia.desktop" ]; then
-                echo "kde-caelestia"
-            else
-                echo "kde-plasma"
-            fi
-            return
-        fi
-    fi
-    
-    # Check for Caelestia via process
-    if pgrep -f "caelestia" > /dev/null 2>&1; then
-        echo "kde-caelestia"
-        return
-    fi
-    
-    # Check session type
-    if [ -n "$DESKTOP_SESSION" ]; then
-        if [[ "$DESKTOP_SESSION" == *"caelestia"* ]]; then
-            echo "kde-caelestia"
-            return
-        elif [[ "$DESKTOP_SESSION" == *"plasma"* ]]; then
-            echo "kde-plasma"
-            return
-        fi
-    fi
-    
-    # Check Wayland display
-    if [ -n "$WAYLAND_DISPLAY" ]; then
-        if pgrep -f "plasmashell" > /dev/null 2>&1; then
-            echo "kde-plasma"
-            return
-        fi
-    fi
-    
-    echo "unknown"
-}
+echo ""
+echo "╔═══════════════════════════════════════════════════════════╗"
+echo "║                                                         ║"
+echo "║   🖼️  Wallpaper Cache - Complete Installer v$VERSION    ║"
+echo "║                                                         ║"
+echo "║   Auto-download wallpapers for Niri & KDE Plasma       ║"
+echo "║                                                         ║"
+echo "╚═══════════════════════════════════════════════════════════╝"
+echo ""
 
-detect_shell() {
-    local shell_name=""
-    
-    # Check current shell
-    if [ -n "$SHELL" ]; then
-        shell_name=$(basename "$SHELL")
-    fi
-    
-    # Check if running in fish
-    if [ -n "$FISH_VERSION" ] || [[ "$shell_name" == "fish" ]]; then
-        echo "fish"
-        return
-    fi
-    
-    # Check if running in bash
-    if [ -n "$BASH_VERSION" ] || [[ "$shell_name" == "bash" ]]; then
-        echo "bash"
-        return
-    fi
-    
-    # Check parent process
-    local parent_process=$(ps -p $PPID -o comm= 2>/dev/null | xargs basename 2>/dev/null)
-    if [[ "$parent_process" == "fish" ]]; then
-        echo "fish"
-        return
-    elif [[ "$parent_process" == "bash" ]]; then
-        echo "bash"
-        return
-    fi
-    
-    # Default to bash
-    echo "bash"
-}
+# Step 1: System dependencies
+print_info "Step 1/8: Installing system dependencies..."
+sudo pacman -S --noconfirm --needed \
+    tk \
+    python-pip \
+    python-virtualenv \
+    desktop-file-utils \
+    xorg-xwayland \
+    curl \
+    2>/dev/null || print_warning "Some packages may already be installed"
+print_success "System dependencies installed"
 
-get_display_number() {
-    if [ -n "$DISPLAY" ]; then
-        echo "$DISPLAY"
-    elif [ -n "$WAYLAND_DISPLAY" ]; then
-        echo ":1"
-    else
-        echo ":0"
-    fi
-}
+# Step 2: Create directories
+print_info "Step 2/8: Creating directories..."
+mkdir -p "$INSTALL_DIR"
+mkdir -p "$VENV_DIR"
+mkdir -p "$CONFIG_DIR"
+mkdir -p "$AUTOSTART_DIR"
+mkdir -p "$BIN_DIR"
+mkdir -p "$(dirname "$FISH_CONFIG")"
+print_success "Directories created"
 
-# ============================================================
-# Installation Functions
-# ============================================================
+# Step 3: Create virtual environment
+print_info "Step 3/8: Creating Python virtual environment..."
+if [ -d "$VENV_DIR" ]; then
+    print_warning "Virtual environment already exists, removing..."
+    rm -rf "$VENV_DIR"
+fi
 
-install_dependencies() {
-    print_info "Installing system dependencies..."
-    
-    # Check if pacman is available (Arch Linux)
-    if command -v pacman &> /dev/null; then
-        sudo pacman -S --noconfirm --needed \
-            tk \
-            python-pip \
-            python-virtualenv \
-            desktop-file-utils \
-            xorg-xwayland \
-            || print_warning "Some packages may already be installed"
-    else
-        print_warning "pacman not found. Please install dependencies manually:"
-        echo "  - tk"
-        echo "  - python-pip"
-        echo "  - python-virtualenv"
-        echo "  - desktop-file-utils"
-        echo "  - xorg-xwayland"
-    fi
-    
-    print_success "System dependencies installed"
-}
+python -m venv "$VENV_DIR"
+source "$VENV_DIR/bin/activate"
+print_success "Virtual environment created"
 
-create_directories() {
-    print_info "Creating directories..."
-    
-    # Create all required directories
-    mkdir -p "$INSTALL_DIR"
-    mkdir -p "$VENV_DIR"
-    mkdir -p "$CONFIG_DIR"
-    mkdir -p "$AUTOSTART_DIR"
-    mkdir -p "$BIN_DIR"
-    mkdir -p "$SERVICE_DIR"
-    mkdir -p "$(dirname "$FISH_CONFIG")"
-    mkdir -p "$HOME/Pictures/WallpaperCache"
-    
-    print_success "Directories created"
-}
+# Step 4: Install Python dependencies
+print_info "Step 4/8: Installing Python dependencies..."
+pip install --upgrade pip --quiet
+pip install requests beautifulsoup4 customtkinter pillow cryptography schedule pystray imagehash --quiet
+deactivate
+print_success "Python dependencies installed"
 
-create_virtual_env() {
-    print_info "Creating Python virtual environment..."
-    
-    if [ -d "$VENV_DIR" ]; then
-        print_warning "Virtual environment already exists, removing..."
-        rm -rf "$VENV_DIR"
-    fi
-    
-    python -m venv "$VENV_DIR"
-    source "$VENV_DIR/bin/activate"
-    print_success "Virtual environment created"
-}
+# Step 5: Create the Python script
+print_info "Step 5/8: Creating Wallpaper Cache script..."
 
-install_python_packages() {
-    print_info "Installing Python dependencies..."
-    
-    source "$VENV_DIR/bin/activate"
-    pip install --upgrade pip --quiet
-    pip install requests beautifulsoup4 customtkinter pillow cryptography schedule pystray imagehash --quiet
-    deactivate
-    
-    print_success "Python dependencies installed"
-}
-
-create_script() {
-    print_info "Creating Wallpaper Cache script..."
-    
-    cat > "$INSTALL_DIR/wallpaper_cache.py" << 'EOF'
+cat > "$INSTALL_DIR/wallpaper_cache.py" << 'EOF'
 #!/usr/bin/env python3
-# Wallpaper Cache - Niri Downloader v7.9
+# Wallpaper Cache - Niri Downloader v8.0
+# FIXED: Thread-safe SQLite, fixed lambda errors
 import os
 # Use system display - don't hardcode
-# os.environ["DISPLAY"] = ":0"  # Let system handle it
 os.environ["QT_QPA_PLATFORM"] = "xcb"
 os.environ["GDK_BACKEND"] = "x11"
 os.environ["CLUTTER_BACKEND"] = "x11"
 
 """
-Wallpaper Cache - Niri Downloader v7.9
+Wallpaper Cache - Niri Downloader v8.0
 Complete version with all 8 tabs and multi-page search
+FIXED: Thread-safe database operations
 """
 
 import re
@@ -233,18 +116,13 @@ import time
 import hashlib
 import io
 import shutil
-import atexit
-import signal
 from pathlib import Path
 from datetime import datetime
 from tkinter import filedialog, messagebox, Listbox
-from typing import List, Dict, Optional, Tuple, Set, Any
+from typing import List, Dict, Optional, Tuple, Set
 from contextlib import contextmanager
 import logging
 from logging.handlers import RotatingFileHandler
-from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError
-from queue import Queue, Empty
-import weakref
 
 import requests
 from bs4 import BeautifulSoup
@@ -257,7 +135,7 @@ import schedule
 # Configuration
 # ----------------------------------------------------------------------
 APP_NAME = "Wallpaper Cache"
-VERSION = "7.9"
+VERSION = "8.0"
 DEFAULT_DOWNLOAD_DIR = str(Path.home() / "Pictures" / "WallpaperCache")
 CONFIG_DIR = Path.home() / ".config" / "wallpaper_cache"
 CONFIG_DIR.mkdir(parents=True, exist_ok=True)
@@ -282,127 +160,85 @@ logger = logging.getLogger(__name__)
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("dark-blue")
 
-# Global flag for graceful shutdown
-SHUTDOWN_FLAG = threading.Event()
-
-def signal_handler(signum, frame):
-    """Handle shutdown signals gracefully"""
-    logger.info(f"Received signal {signum}, shutting down...")
-    SHUTDOWN_FLAG.set()
-
-# Register signal handlers
-signal.signal(signal.SIGINT, signal_handler)
-signal.signal(signal.SIGTERM, signal_handler)
-
 # ----------------------------------------------------------------------
-# Database helpers with connection pooling
+# Thread-safe Database helpers
 # ----------------------------------------------------------------------
-class DatabasePool:
-    """Simple connection pool for SQLite to prevent connection leaks"""
-    def __init__(self, db_path, max_connections=5):
-        self.db_path = db_path
-        self.max_connections = max_connections
-        self._connections = []
-        self._lock = threading.Lock()
-        
-    @contextmanager
-    def get_connection(self):
-        conn = None
-        with self._lock:
-            if self._connections:
-                conn = self._connections.pop()
-            else:
-                conn = sqlite3.connect(self.db_path, timeout=10)
-                conn.execute("PRAGMA journal_mode=WAL")
-                conn.execute("PRAGMA synchronous=NORMAL")
-        
-        try:
-            yield conn
-            conn.commit()
-        except Exception as e:
-            conn.rollback()
-            logger.error(f"Database error: {e}")
-            raise
-        finally:
-            with self._lock:
-                if len(self._connections) < self.max_connections:
-                    self._connections.append(conn)
-                else:
-                    conn.close()
-    
-    def close_all(self):
-        with self._lock:
-            for conn in self._connections:
-                try:
-                    conn.close()
-                except:
-                    pass
-            self._connections.clear()
+_thread_local = threading.local()
 
-# Initialize database pool
-db_pool = DatabasePool(DB_FILE)
-
-@contextmanager
 def get_db_connection():
-    """Context manager for database connections using the pool"""
-    with db_pool.get_connection() as conn:
-        yield conn
+    """Get a database connection for the current thread"""
+    if not hasattr(_thread_local, 'conn') or _thread_local.conn is None:
+        _thread_local.conn = sqlite3.connect(DB_FILE)
+        _thread_local.conn.row_factory = sqlite3.Row
+    return _thread_local.conn
+
+def close_db_connection():
+    """Close the database connection for the current thread"""
+    if hasattr(_thread_local, 'conn') and _thread_local.conn is not None:
+        _thread_local.conn.close()
+        _thread_local.conn = None
 
 def init_db():
-    """Initialize database schema if it doesn't exist"""
-    with get_db_connection() as conn:
-        c = conn.cursor()
-        c.execute('''CREATE TABLE IF NOT EXISTS downloads
-                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                      filename TEXT, filepath TEXT, source_url TEXT,
-                      source_name TEXT, resolution TEXT, file_size INTEGER,
-                      download_date TEXT, file_hash TEXT, collection_name TEXT)''')
-        c.execute('''CREATE TABLE IF NOT EXISTS keywords
-                     (keyword TEXT PRIMARY KEY, count INTEGER DEFAULT 1, last_used TEXT, last_page INTEGER DEFAULT 1)''')
-        c.execute('''CREATE INDEX IF NOT EXISTS idx_downloads_url ON downloads(source_url)''')
-        c.execute('''CREATE INDEX IF NOT EXISTS idx_downloads_date ON downloads(download_date)''')
-        c.execute('''CREATE INDEX IF NOT EXISTS idx_keywords_name ON keywords(keyword)''')
-
-init_db()
+    """Initialize database tables"""
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS downloads
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  filename TEXT, filepath TEXT, source_url TEXT,
+                  source_name TEXT, resolution TEXT, file_size INTEGER,
+                  download_date TEXT, file_hash TEXT, collection_name TEXT)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS keywords
+                 (keyword TEXT PRIMARY KEY, count INTEGER DEFAULT 1, last_used TEXT, last_page INTEGER DEFAULT 1)''')
+    conn.commit()
 
 def get_downloaded_urls() -> Set[str]:
-    with get_db_connection() as conn:
-        c = conn.cursor()
-        c.execute('SELECT source_url FROM downloads')
-        return {row[0] for row in c.fetchall()}
+    """Get all URLs ever downloaded (thread-safe)"""
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute('SELECT source_url FROM downloads')
+    return {row[0] for row in c.fetchall()}
 
 def get_keyword_last_page(keyword: str) -> int:
-    with get_db_connection() as conn:
-        c = conn.cursor()
-        c.execute('SELECT last_page FROM keywords WHERE keyword = ?', (keyword,))
-        row = c.fetchone()
-        return row[0] if row else 1
+    """Get the last page searched for a keyword (thread-safe)"""
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute('SELECT last_page FROM keywords WHERE keyword = ?', (keyword,))
+    row = c.fetchone()
+    return row[0] if row else 1
 
 def update_keyword_last_page(keyword: str, page: int):
-    with get_db_connection() as conn:
-        c = conn.cursor()
-        c.execute('''INSERT INTO keywords (keyword, count, last_used, last_page) 
-                     VALUES (?, 1, ?, ?) 
-                     ON CONFLICT(keyword) DO UPDATE SET 
-                     count = count + 1, last_used = ?, last_page = ?''',
-                  (keyword, datetime.now().isoformat(), page, datetime.now().isoformat(), page))
+    """Update the last page searched for a keyword (thread-safe)"""
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute('''INSERT INTO keywords (keyword, count, last_used, last_page) 
+                 VALUES (?, 1, ?, ?) 
+                 ON CONFLICT(keyword) DO UPDATE SET 
+                 count = count + 1, last_used = ?, last_page = ?''',
+              (keyword, datetime.now().isoformat(), page, datetime.now().isoformat(), page))
+    conn.commit()
 
-def add_download_record(filename, filepath, source_url, source_name, file_size, file_hash):
-    with get_db_connection() as conn:
-        c = conn.cursor()
-        c.execute('INSERT INTO downloads (filename, filepath, source_url, source_name, file_size, download_date, file_hash) VALUES (?,?,?,?,?,?,?)',
-                  (filename, str(filepath), source_url, source_name, file_size, datetime.now().isoformat(), file_hash))
+def add_download_to_history(filename, filepath, source_url, source_name, file_size, file_hash):
+    """Add a download to history (thread-safe)"""
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute('INSERT INTO downloads (filename, filepath, source_url, source_name, file_size, download_date, file_hash) VALUES (?,?,?,?,?,?,?)',
+              (filename, str(filepath), source_url, source_name, file_size, datetime.now().isoformat(), file_hash))
+    conn.commit()
 
-def get_recent_downloads(limit=100):
-    with get_db_connection() as conn:
-        c = conn.cursor()
-        c.execute("SELECT filename, source_name, download_date, file_size FROM downloads ORDER BY download_date DESC LIMIT ?", (limit,))
-        return c.fetchall()
+def get_history(limit=100):
+    """Get download history (thread-safe)"""
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute("SELECT filename, source_name, download_date, file_size FROM downloads ORDER BY download_date DESC LIMIT ?", (limit,))
+    return c.fetchall()
 
 # ----------------------------------------------------------------------
-# Persistent Queue with better error handling
+# Persistent Queue (thread-safe)
 # ----------------------------------------------------------------------
+_queue_db_lock = threading.Lock()
+
 def init_queue_db():
+    """Initialize queue database"""
     conn = sqlite3.connect(QUEUE_DB_FILE)
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS queue (
@@ -415,57 +251,51 @@ def init_queue_db():
         retries INTEGER DEFAULT 0,
         status TEXT DEFAULT 'pending'
     )''')
-    c.execute('''CREATE INDEX IF NOT EXISTS idx_queue_status ON queue(status)''')
-    c.execute('''CREATE INDEX IF NOT EXISTS idx_queue_url ON queue(url)''')
     conn.commit()
     conn.close()
 
 init_queue_db()
 
 def add_to_persistent_queue(url, filename, title=None, collection=None):
-    conn = sqlite3.connect(QUEUE_DB_FILE)
-    try:
+    """Add to queue (thread-safe)"""
+    with _queue_db_lock:
+        conn = sqlite3.connect(QUEUE_DB_FILE)
         c = conn.cursor()
-        c.execute('INSERT OR IGNORE INTO queue (url, filename, title, collection, added, status) VALUES (?,?,?,?,?,?)',
-                  (url, filename, title, collection, datetime.now().isoformat(), 'pending'))
-        conn.commit()
-    except Exception as e:
-        logger.error(f"Error adding to persistent queue: {e}")
-    finally:
-        conn.close()
+        try:
+            c.execute('INSERT INTO queue (url, filename, title, collection, added, status) VALUES (?,?,?,?,?,?)',
+                      (url, filename, title, collection, datetime.now().isoformat(), 'pending'))
+            conn.commit()
+        except sqlite3.IntegrityError:
+            pass
+        finally:
+            conn.close()
 
 def remove_from_persistent_queue(url):
-    conn = sqlite3.connect(QUEUE_DB_FILE)
-    try:
+    """Remove from queue (thread-safe)"""
+    with _queue_db_lock:
+        conn = sqlite3.connect(QUEUE_DB_FILE)
         c = conn.cursor()
         c.execute('DELETE FROM queue WHERE url = ?', (url,))
         conn.commit()
-    except Exception as e:
-        logger.error(f"Error removing from persistent queue: {e}")
-    finally:
         conn.close()
 
 def load_persistent_queue():
-    conn = sqlite3.connect(QUEUE_DB_FILE)
-    try:
+    """Load queue (thread-safe)"""
+    with _queue_db_lock:
+        conn = sqlite3.connect(QUEUE_DB_FILE)
         c = conn.cursor()
         c.execute('SELECT url, filename, title, collection, retries FROM queue WHERE status = "pending" ORDER BY added')
-        return c.fetchall()
-    except Exception as e:
-        logger.error(f"Error loading persistent queue: {e}")
-        return []
-    finally:
+        rows = c.fetchall()
         conn.close()
+        return rows
 
 def clear_persistent_queue():
-    conn = sqlite3.connect(QUEUE_DB_FILE)
-    try:
+    """Clear queue (thread-safe)"""
+    with _queue_db_lock:
+        conn = sqlite3.connect(QUEUE_DB_FILE)
         c = conn.cursor()
         c.execute('DELETE FROM queue')
         conn.commit()
-    except Exception as e:
-        logger.error(f"Error clearing persistent queue: {e}")
-    finally:
         conn.close()
 
 # ----------------------------------------------------------------------
@@ -480,12 +310,9 @@ def get_free_space_gb(path):
 
 def get_folder_size_gb(path):
     total = 0
-    try:
-        for entry in Path(path).rglob('*'):
-            if entry.is_file():
-                total += entry.stat().st_size
-    except Exception as e:
-        logger.error(f"Error calculating folder size: {e}")
+    for entry in Path(path).rglob('*'):
+        if entry.is_file():
+            total += entry.stat().st_size
     return total / (1024**3)
 
 def delete_oldest_downloads(download_dir, target_size_gb):
@@ -495,18 +322,16 @@ def delete_oldest_downloads(download_dir, target_size_gb):
     files.sort(key=lambda f: f.stat().st_mtime)
     total_gb = get_folder_size_gb(download_dir)
     deleted = []
+    conn = get_db_connection()
     while total_gb > target_size_gb and files:
         oldest = files.pop(0)
         size_gb = oldest.stat().st_size / (1024**3)
-        try:
-            oldest.unlink()
-            deleted.append(oldest.name)
-            total_gb -= size_gb
-            with get_db_connection() as conn:
-                c = conn.cursor()
-                c.execute("DELETE FROM downloads WHERE filepath = ?", (str(oldest),))
-        except Exception as e:
-            logger.error(f"Error deleting file {oldest}: {e}")
+        oldest.unlink()
+        deleted.append(oldest.name)
+        total_gb -= size_gb
+        c = conn.cursor()
+        c.execute("DELETE FROM downloads WHERE filepath = ?", (str(oldest),))
+        conn.commit()
     return deleted, total_gb
 
 # ----------------------------------------------------------------------
@@ -530,55 +355,37 @@ def load_settings():
         "max_search_pages": 5
     }
     if SETTINGS_FILE.exists():
-        try:
-            with open(SETTINGS_FILE, 'r') as f:
-                saved = json.load(f)
-                default.update(saved)
-        except Exception as e:
-            logger.error(f"Error loading settings: {e}")
+        with open(SETTINGS_FILE, 'r') as f:
+            saved = json.load(f)
+            default.update(saved)
     return default
 
 def save_settings(settings):
-    try:
-        with open(SETTINGS_FILE, 'w') as f:
-            json.dump(settings, f, indent=2)
-    except Exception as e:
-        logger.error(f"Error saving settings: {e}")
+    with open(SETTINGS_FILE, 'w') as f:
+        json.dump(settings, f, indent=2)
 
 # ----------------------------------------------------------------------
 # Keywords, Collections, API Keys
 # ----------------------------------------------------------------------
 def load_keywords():
     if KEYWORDS_FILE.exists():
-        try:
-            with open(KEYWORDS_FILE, 'r') as f:
-                return json.load(f)
-        except:
-            return {"last_used": [], "favorites": []}
+        with open(KEYWORDS_FILE, 'r') as f:
+            return json.load(f)
     return {"last_used": [], "favorites": []}
 
 def save_keywords(keywords_dict):
-    try:
-        with open(KEYWORDS_FILE, 'w') as f:
-            json.dump(keywords_dict, f, indent=2)
-    except Exception as e:
-        logger.error(f"Error saving keywords: {e}")
+    with open(KEYWORDS_FILE, 'w') as f:
+        json.dump(keywords_dict, f, indent=2)
 
 def load_collections():
     if COLLECTIONS_FILE.exists():
-        try:
-            with open(COLLECTIONS_FILE, 'r') as f:
-                return json.load(f)
-        except:
-            return {}
+        with open(COLLECTIONS_FILE, 'r') as f:
+            return json.load(f)
     return {}
 
 def save_collections(collections):
-    try:
-        with open(COLLECTIONS_FILE, 'w') as f:
-            json.dump(collections, f, indent=2)
-    except Exception as e:
-        logger.error(f"Error saving collections: {e}")
+    with open(COLLECTIONS_FILE, 'w') as f:
+        json.dump(collections, f, indent=2)
 
 def get_or_create_key():
     if KEY_FILE.exists():
@@ -603,19 +410,13 @@ def decrypt_api_keys(encrypted_data):
 
 def load_api_keys():
     if KEYS_FILE.exists():
-        try:
-            with open(KEYS_FILE, 'rb') as f:
-                return decrypt_api_keys(f.read())
-        except:
-            return {}
+        with open(KEYS_FILE, 'rb') as f:
+            return decrypt_api_keys(f.read())
     return {}
 
 def save_api_keys(keys_dict):
-    try:
-        with open(KEYS_FILE, 'wb') as f:
-            f.write(encrypt_api_keys(keys_dict))
-    except Exception as e:
-        logger.error(f"Error saving API keys: {e}")
+    with open(KEYS_FILE, 'wb') as f:
+        f.write(encrypt_api_keys(keys_dict))
 
 # ----------------------------------------------------------------------
 # Main Application
@@ -638,27 +439,13 @@ class WallpaperCacheApp(ctk.CTk):
         self.download_queue = []
         self.active_downloads = 0
         self.max_concurrent = self.settings.get("max_concurrent", 3)
-        self.queue_lock = threading.RLock()  # Reentrant lock for better safety
+        self.queue_lock = threading.Lock()
         self.current_results = []
         self.result_widgets = []
         self.api_entries = {}
-        self.thumbnail_cache = {}  # In-memory cache for thumbnails
+
         self.downloaded_urls = get_downloaded_urls()
-        
-        # Thread pool for managing concurrent operations
-        self.executor = ThreadPoolExecutor(max_workers=5, thread_name_prefix="WPC")
-        
-        # Queue for background tasks
-        self.task_queue = Queue()
-        self.running_tasks = set()
-        self.task_lock = threading.Lock()
-        
-        # Register cleanup on exit
-        atexit.register(self.cleanup)
-        
-        # Flag for shutdown
-        self._shutting_down = False
-        
+
         self._create_widgets()
         
         self.protocol("WM_DELETE_WINDOW", self.on_closing)
@@ -666,38 +453,16 @@ class WallpaperCacheApp(ctk.CTk):
         self.after(100, self._restore_persistent_queue)
         self.after(1000, self._process_queue)
         self.after(3600000, self._check_disk_space)
-        
-        # Start background task processor
-        self.after(100, self._process_task_queue)
 
         if self.settings.get("auto_download_on_startup", True):
             self.after(3000, self.run_startup_download)
 
-    def cleanup(self):
-        """Clean up resources on exit"""
-        if self._shutting_down:
-            return
-        self._shutting_down = True
-        logger.info("Cleaning up resources...")
-        
-        # Close database connections
-        db_pool.close_all()
-        
-        # Shutdown thread pool
-        if hasattr(self, 'executor'):
-            self.executor.shutdown(wait=False, cancel_futures=True)
-        
-        # Clear caches
-        self.thumbnail_cache.clear()
-        
-        logger.info("Cleanup complete")
-
     def on_closing(self):
+        close_db_connection()
         if self.settings.get("minimize_to_tray", True):
             self.withdraw()
         else:
             self.quit()
-            self.cleanup()
 
     def _send_notification(self, title, message, urgency="normal"):
         if self.settings.get("show_notifications", True):
@@ -707,29 +472,21 @@ class WallpaperCacheApp(ctk.CTk):
                 pass
 
     def _restore_persistent_queue(self):
-        try:
-            pending = load_persistent_queue()
+        pending = load_persistent_queue()
+        for url, filename, title, collection, retries in pending:
             with self.queue_lock:
-                for url, filename, title, collection, retries in pending:
-                    if not any(item.get('url') == url for item in self.download_queue):
-                        self.download_queue.append({
-                            'url': url, 'filename': filename, 'title': title,
-                            'retries': retries, 'status': 'pending'
-                        })
-            if pending:
-                self.status_var.set(f"📋 Restored {len(pending)} pending downloads")
-                self._refresh_queue_display()
-        except Exception as e:
-            logger.error(f"Error restoring queue: {e}")
+                self.download_queue.append({
+                    'url': url, 'filename': filename, 'title': title,
+                    'retries': retries, 'status': 'pending'
+                })
+        if pending:
+            self.status_var.set(f"📋 Restored {len(pending)} pending downloads")
 
     def _check_disk_space(self):
-        try:
-            free = get_free_space_gb(self.download_dir)
-            if 0 < free < 1.0:
-                self.status_var.set(f"⚠️ Low disk space: {free:.1f} GB remaining")
-                self._send_notification("Low Disk Space", f"Only {free:.1f} GB left", "critical")
-        except Exception as e:
-            logger.error(f"Error checking disk space: {e}")
+        free = get_free_space_gb(self.download_dir)
+        if 0 < free < 1.0:
+            self.status_var.set(f"⚠️ Low disk space: {free:.1f} GB remaining")
+            self._send_notification("Low Disk Space", f"Only {free:.1f} GB left", "critical")
         self.after(3600000, self._check_disk_space)
 
     def _create_widgets(self):
@@ -776,6 +533,9 @@ class WallpaperCacheApp(ctk.CTk):
         ctk.CTkButton(dir_frame, text="Change Folder", command=self._change_dir, width=120).pack(side="right", padx=(0,10))
         ctk.CTkButton(dir_frame, text="Open Folder", command=self._open_folder, width=120).pack(side="right")
 
+    # ------------------------------------------------------------------
+    # Search Tab
+    # ------------------------------------------------------------------
     def _setup_search_tab(self):
         tab = self.tabview.tab("Search")
         top_frame = ctk.CTkFrame(tab)
@@ -803,73 +563,40 @@ class WallpaperCacheApp(ctk.CTk):
         self.results_frame = ctk.CTkScrollableFrame(tab, label_text="Results")
         self.results_frame.pack(fill="both", expand=True, padx=10, pady=5)
 
-    def _perform_search(self, retries=3):
+    def _perform_search(self):
         query = self.search_entry.get().strip()
         if not query:
             messagebox.showwarning("Empty", "Enter search keywords")
             return
-        
         self.status_var.set(f"🔍 Searching for '{query}'...")
         self.search_btn.configure(state="disabled")
 
-        # Clear old results
         for widget in self.results_frame.winfo_children():
             widget.destroy()
         self.current_results.clear()
         self.select_all_var.set(False)
         self.download_selected_btn.configure(text="⬇ Download Selected (0)")
 
-        # Submit search task
-        future = self.executor.submit(self._fetch_results, query, retries)
-        with self.task_lock:
-            self.running_tasks.add(future)
+        threading.Thread(target=self._fetch_results, args=(query,), daemon=True).start()
 
-    def _fetch_results(self, query, retries=3):
-        for attempt in range(retries):
-            if SHUTDOWN_FLAG.is_set() or self._shutting_down:
-                return
-            
-            try:
-                params = {"q": query, "categories": "111", "purity": "100", "sorting": "relevance", "page": 1}
-                
-                # Add API key if available
-                if 'wallhaven_api' in self.api_keys and self.api_keys['wallhaven_api']:
-                    params["apikey"] = self.api_keys['wallhaven_api']
-                
-                resp = requests.get("https://wallhaven.cc/api/v1/search", params=params, timeout=30)
-                resp.raise_for_status()
-                data = resp.json()
-                items = data.get("data", [])[:30]
-                
-                for i, item in enumerate(items):
-                    if SHUTDOWN_FLAG.is_set():
-                        return
-                    title = item.get("title", f"WH_{item['id']}")
-                    img_url = item.get("path")
-                    thumb_url = item.get("thumbs", {}).get("large", img_url)
-                    resolution = item.get('resolution', 'unknown')
-                    self.after(0, self._add_result_item, i, title, img_url, thumb_url, resolution)
-                
-                self.after(0, lambda: self.status_var.set(f"✅ Found {len(items)} results"))
-                return  # Success
-                
-            except requests.exceptions.RequestException as e:
-                logger.error(f"Search attempt {attempt+1} failed: {e}")
-                if attempt == retries - 1:
-                    self.after(0, lambda: self._show_error(f"Search failed after {retries} attempts: {str(e)}"))
-                else:
-                    time.sleep(2 ** attempt)  # Exponential backoff
-            except Exception as e:
-                logger.error(f"Unexpected error in search: {e}")
-                self.after(0, lambda: self._show_error(f"Search failed: {str(e)}"))
-                break
-            finally:
-                if attempt == retries - 1:
-                    self.after(0, lambda: self.search_btn.configure(state="normal"))
-                    
-        # Clean up task reference
-        with self.task_lock:
-            self.running_tasks.discard(threading.current_thread())
+    def _fetch_results(self, query):
+        try:
+            params = {"q": query, "categories": "111", "purity": "100", "sorting": "relevance", "page": 1}
+            resp = requests.get("https://wallhaven.cc/api/v1/search", params=params, timeout=30)
+            data = resp.json()
+            items = data.get("data", [])[:30]
+            for i, item in enumerate(items):
+                title = item.get("title", f"WH_{item['id']}")
+                img_url = item.get("path")
+                thumb_url = item.get("thumbs", {}).get("large", img_url)
+                resolution = item.get('resolution', 'unknown')
+                self.after(0, self._add_result_item, i, title, img_url, thumb_url, resolution)
+            self.after(0, lambda: self.status_var.set(f"✅ Found {len(items)} results"))
+        except Exception as e:
+            error_msg = str(e)
+            self.after(0, lambda msg=error_msg: self._show_error(f"Search failed: {msg}"))
+        finally:
+            self.after(0, lambda: self.search_btn.configure(state="normal"))
 
     def _add_result_item(self, index, title, url, thumb_url, resolution):
         frame = ctk.CTkFrame(self.results_frame)
@@ -883,9 +610,7 @@ class WallpaperCacheApp(ctk.CTk):
 
         thumb_label = ctk.CTkLabel(frame, text="🖼️", width=100, height=70, fg_color="gray20", corner_radius=5)
         thumb_label.pack(side="left", padx=5, pady=5)
-        
-        # Use thread pool for thumbnail loading
-        self.executor.submit(self._load_thumb, thumb_url, thumb_label)
+        threading.Thread(target=self._load_thumb, args=(thumb_url, thumb_label), daemon=True).start()
 
         info_frame = ctk.CTkFrame(frame, fg_color="transparent")
         info_frame.pack(side="left", fill="x", expand=True, padx=10)
@@ -917,43 +642,25 @@ class WallpaperCacheApp(ctk.CTk):
     def _load_thumb(self, url, label):
         cache_key = hashlib.md5(url.encode()).hexdigest()
         cache_path = THUMB_CACHE_DIR / f"{cache_key}.jpg"
-        
-        # Check in-memory cache first
-        if cache_key in self.thumbnail_cache:
-            try:
-                img = self.thumbnail_cache[cache_key]
-                ctk_img = ctk.CTkImage(light_image=img, dark_image=img, size=(100,70))
-                label.configure(image=ctk_img, text="")
-                label.image = ctk_img
-                return
-            except:
-                pass
-        
-        # Check disk cache
         if cache_path.exists():
             try:
                 img = Image.open(cache_path)
                 img.thumbnail((100,70), Image.Resampling.LANCZOS)
-                self.thumbnail_cache[cache_key] = img
                 ctk_img = ctk.CTkImage(light_image=img, dark_image=img, size=(100,70))
                 label.configure(image=ctk_img, text="")
                 label.image = ctk_img
                 return
             except:
                 pass
-                
         try:
             resp = requests.get(url, timeout=10)
-            resp.raise_for_status()
             img = Image.open(io.BytesIO(resp.content))
             img.thumbnail((100,70), Image.Resampling.LANCZOS)
             img.save(cache_path, "JPEG", quality=85)
-            self.thumbnail_cache[cache_key] = img
             ctk_img = ctk.CTkImage(light_image=img, dark_image=img, size=(100,70))
             label.configure(image=ctk_img, text="")
             label.image = ctk_img
-        except Exception as e:
-            logger.error(f"Thumbnail load error: {e}")
+        except:
             label.configure(text="🖼️")
 
     def _update_selected_count(self):
@@ -1031,11 +738,7 @@ class WallpaperCacheApp(ctk.CTk):
             messagebox.showwarning("Incomplete", "Name and keywords required")
             return
 
-        keywords = [k.strip() for k in keywords_str.split(',') if k.strip()]
-        if not keywords:
-            messagebox.showwarning("Invalid", "At least one keyword required")
-            return
-            
+        keywords = [k.strip() for k in keywords_str.split(',')]
         self.collections[name] = {
             "keywords": keywords,
             "source": source,
@@ -1050,21 +753,19 @@ class WallpaperCacheApp(ctk.CTk):
     def _refresh_collections_list(self):
         for widget in self.collections_list_frame.winfo_children():
             widget.destroy()
-            
         for name, data in self.collections.items():
             frame = ctk.CTkFrame(self.collections_list_frame)
             frame.pack(fill="x", padx=5, pady=2)
-            
-            label = ctk.CTkLabel(frame, 
-                               text=f"{name} | {data['source']} | {', '.join(data['keywords'])} | limit {data['limit']}", 
-                               anchor="w")
+            label = ctk.CTkLabel(frame, text=f"{name} | {data['source']} | {', '.join(data['keywords'])} | limit {data['limit']}", anchor="w")
             label.pack(side="left", fill="x", expand=True, padx=10)
-            
-            # Use lambda with default argument to capture the current name
-            ctk.CTkButton(frame, text="🗑️", width=50, 
-                         command=lambda n=name: self._delete_collection(n)).pack(side="right", padx=5)
-            ctk.CTkButton(frame, text="⬇ Download", width=100, 
-                         command=lambda n=name: self._download_collection_now(n)).pack(side="right", padx=5)
+
+            def make_delete(n=name):
+                return self._delete_collection(n)
+            def make_download(n=name):
+                return self._download_collection_now(n)
+
+            ctk.CTkButton(frame, text="🗑️", width=50, command=make_delete).pack(side="right", padx=5)
+            ctk.CTkButton(frame, text="⬇ Download", width=100, command=make_download).pack(side="right", padx=5)
 
     def _delete_collection(self, name):
         if messagebox.askyesno("Confirm", f"Delete collection '{name}'?"):
@@ -1074,11 +775,9 @@ class WallpaperCacheApp(ctk.CTk):
             self.status_var.set(f"🗑️ Collection '{name}' deleted")
 
     def _download_collection_now(self, name):
-        data = self.collections.get(name)
-        if not data:
-            return
+        data = self.collections[name]
         for kw in data["keywords"]:
-            self.executor.submit(self._download_keyword, kw, data["limit"])
+            threading.Thread(target=self._download_keyword, args=(kw, data["limit"]), daemon=True).start()
 
     # ------------------------------------------------------------------
     # Keywords Tab
@@ -1099,9 +798,7 @@ class WallpaperCacheApp(ctk.CTk):
         kw = self.new_keyword_entry.get().strip()
         if not kw:
             return
-        if kw not in self.keywords_data.get("favorites", []):
-            if "favorites" not in self.keywords_data:
-                self.keywords_data["favorites"] = []
+        if kw not in self.keywords_data["favorites"]:
             self.keywords_data["favorites"].append(kw)
             save_keywords(self.keywords_data)
             self._refresh_keywords_list()
@@ -1109,7 +806,7 @@ class WallpaperCacheApp(ctk.CTk):
             self.status_var.set(f"✅ Keyword '{kw}' added")
 
     def _delete_keyword(self, kw):
-        if kw in self.keywords_data.get("favorites", []):
+        if kw in self.keywords_data["favorites"]:
             self.keywords_data["favorites"].remove(kw)
             save_keywords(self.keywords_data)
             self._refresh_keywords_list()
@@ -1118,7 +815,7 @@ class WallpaperCacheApp(ctk.CTk):
     def _refresh_keywords_list(self):
         for widget in self.keywords_list_frame.winfo_children():
             widget.destroy()
-        for kw in self.keywords_data.get("favorites", []):
+        for kw in self.keywords_data["favorites"]:
             frame = ctk.CTkFrame(self.keywords_list_frame)
             frame.pack(fill="x", padx=5, pady=2)
             label = ctk.CTkLabel(frame, text=kw, anchor="w")
@@ -1155,7 +852,7 @@ class WallpaperCacheApp(ctk.CTk):
             ctk.CTkLabel(frame, text=label, width=150).pack(side="left", padx=5)
             entry = ctk.CTkEntry(frame, placeholder_text=hint, width=300, show="*")
             entry.pack(side="left", fill="x", expand=True, padx=5)
-            if key in self.api_keys and self.api_keys[key]:
+            if key in self.api_keys:
                 entry.insert(0, self.api_keys[key])
             self.api_entries[key] = entry
             ctk.CTkButton(frame, text="👁️", width=40, command=lambda e=entry: self._toggle_visibility(e)).pack(side="left", padx=2)
@@ -1208,19 +905,15 @@ class WallpaperCacheApp(ctk.CTk):
 
     def _refresh_history(self):
         self.history_text.delete("1.0", "end")
-        try:
-            rows = get_recent_downloads(100)
-            if rows:
-                self.history_text.insert("1.0", "📜 Recent downloads:\n\n")
-                for row in rows:
-                    filename, source, date, size = row
-                    size_mb = size / (1024*1024) if size else 0
-                    self.history_text.insert("end", f"📄 {filename} ({size_mb:.1f} MB) - {source} - {date[:10]}\n")
-            else:
-                self.history_text.insert("1.0", "No downloads yet. Start searching and downloading!")
-        except Exception as e:
-            logger.error(f"Error refreshing history: {e}")
-            self.history_text.insert("1.0", "Error loading history")
+        rows = get_history(100)
+        if rows:
+            self.history_text.insert("1.0", "📜 Recent downloads:\n\n")
+            for row in rows:
+                filename, source, date, size = row
+                size_mb = size / (1024*1024) if size else 0
+                self.history_text.insert("end", f"📄 {filename} ({size_mb:.1f} MB) - {source} - {date[:10]}\n")
+        else:
+            self.history_text.insert("1.0", "No downloads yet. Start searching and downloading!")
 
     # ------------------------------------------------------------------
     # Queue Tab
@@ -1285,7 +978,7 @@ class WallpaperCacheApp(ctk.CTk):
 
     def _refresh_keywords_listbox(self):
         self.schedule_keywords_listbox.delete(0, 'end')
-        for kw in self.keywords_data.get("favorites", []):
+        for kw in self.keywords_data["favorites"]:
             self.schedule_keywords_listbox.insert('end', kw)
 
     def _toggle_schedule(self):
@@ -1430,175 +1123,136 @@ class WallpaperCacheApp(ctk.CTk):
         self.disk_status_label.configure(text=f"📊 Used: {total:.1f} GB | Free: {free:.1f} GB")
 
     # ------------------------------------------------------------------
-    # DOWNLOAD FUNCTIONS - Multi-page search
+    # DOWNLOAD FUNCTIONS
     # ------------------------------------------------------------------
-    def _download_keyword(self, keyword, limit, retries=3):
-        for attempt in range(retries):
-            if SHUTDOWN_FLAG.is_set() or self._shutting_down:
-                return
-                
-            try:
-                last_page = get_keyword_last_page(keyword)
-                max_pages = self.settings.get("max_search_pages", 5)
-                start_page = last_page
-                new_downloads = 0
-                downloaded_urls = get_downloaded_urls()
-                
-                for page in range(start_page, start_page + max_pages):
-                    if new_downloads >= limit or SHUTDOWN_FLAG.is_set():
-                        break
-                        
-                    self.status_var.set(f"🔍 Searching page {page} for '{keyword}'...")
-                    params = {
-                        "q": keyword, 
-                        "categories": "111", 
-                        "purity": "100", 
-                        "sorting": "relevance", 
-                        "page": page
-                    }
-                    if 'wallhaven_api' in self.api_keys and self.api_keys['wallhaven_api']:
-                        params["apikey"] = self.api_keys['wallhaven_api']
-                        
-                    resp = requests.get("https://wallhaven.cc/api/v1/search", 
-                                       params=params, 
-                                       headers={"User-Agent": "WallpaperCache/1.0"}, 
-                                       timeout=30)
-                    resp.raise_for_status()
-                    data = resp.json()
-                    items = data.get("data", [])
+    def _download_keyword(self, keyword, limit):
+        """Search for NEW wallpapers across multiple pages"""
+        try:
+            last_page = get_keyword_last_page(keyword)
+            max_pages = self.settings.get("max_search_pages", 5)
+            start_page = last_page
+            new_downloads = 0
+            downloaded_urls = get_downloaded_urls()
+            
+            for page in range(start_page, start_page + max_pages):
+                if new_downloads >= limit:
+                    break
                     
-                    if not items:
-                        self.status_var.set(f"📭 No more wallpapers for '{keyword}'")
-                        break
-                        
-                    for item in items:
-                        if new_downloads >= limit or SHUTDOWN_FLAG.is_set():
-                            break
-                        img_url = item.get("path")
-                        if not img_url or img_url in downloaded_urls:
-                            continue
-                            
-                        title = item.get("title", f"WH_{item['id']}")
-                        filename = self._sanitize_filename(f"{title}.jpg")
-                        
-                        add_to_persistent_queue(img_url, filename, title, None)
-                        with self.queue_lock:
-                            self.download_queue.append({
-                                'url': img_url, 
-                                'filename': filename, 
-                                'title': title, 
-                                'retries': 0, 
-                                'status': 'pending'
-                            })
-                        downloaded_urls.add(img_url)
-                        new_downloads += 1
-                        time.sleep(0.3)
+                self.after(0, lambda p=page, k=keyword: self.status_var.set(f"🔍 Searching page {p} for '{k}'..."))
+                params = {
+                    "q": keyword, 
+                    "categories": "111", 
+                    "purity": "100", 
+                    "sorting": "relevance", 
+                    "page": page
+                }
+                if 'wallhaven_api' in self.api_keys:
+                    params["apikey"] = self.api_keys['wallhaven_api']
                     
-                    update_keyword_last_page(keyword, page + 1)
-                    time.sleep(0.5)
+                resp = requests.get("https://wallhaven.cc/api/v1/search", 
+                                   params=params, 
+                                   headers={"User-Agent": "WallpaperCache/1.0"}, 
+                                   timeout=30)
+                resp.raise_for_status()
+                data = resp.json()
+                items = data.get("data", [])
                 
-                if new_downloads > 0:
-                    self.after(0, self._refresh_queue_display)
-                    self.status_var.set(f"✅ Found {new_downloads} new wallpapers for '{keyword}'")
-                    self._send_notification(f"New Wallpapers: {keyword}", f"Found {new_downloads} new wallpapers")
-                else:
-                    self.status_var.set(f"📭 No new wallpapers for '{keyword}'")
-                return  # Success
+                if not items:
+                    self.after(0, lambda k=keyword: self.status_var.set(f"📭 No more wallpapers for '{k}'"))
+                    break
+                    
+                for item in items:
+                    if new_downloads >= limit:
+                        break
+                    img_url = item.get("path")
+                    if img_url in downloaded_urls:
+                        continue
+                        
+                    title = item.get("title", f"WH_{item['id']}")
+                    filename = self._sanitize_filename(f"{title}.jpg")
+                    
+                    add_to_persistent_queue(img_url, filename, title, None)
+                    with self.queue_lock:
+                        self.download_queue.append({
+                            'url': img_url, 
+                            'filename': filename, 
+                            'title': title, 
+                            'retries': 0, 
+                            'status': 'pending'
+                        })
+                    downloaded_urls.add(img_url)
+                    new_downloads += 1
+                    time.sleep(0.3)
                 
-            except requests.exceptions.RequestException as e:
-                logger.error(f"Keyword download error for {keyword} (attempt {attempt+1}): {e}")
-                if attempt == retries - 1:
-                    self.after(0, lambda: self.status_var.set(f"❌ Error searching '{keyword}': {str(e)[:50]}"))
-                else:
-                    time.sleep(2 ** attempt)  # Exponential backoff
-            except Exception as e:
-                logger.error(f"Unexpected error for {keyword}: {e}")
-                self.after(0, lambda: self.status_var.set(f"❌ Error searching '{keyword}': {str(e)[:50]}"))
-                break
+                update_keyword_last_page(keyword, page + 1)
+                time.sleep(0.5)
+            
+            if new_downloads > 0:
+                self.after(0, self._refresh_queue_display)
+                self.after(0, lambda k=keyword, n=new_downloads: self.status_var.set(f"✅ Found {n} new wallpapers for '{k}'"))
+                self.after(0, lambda k=keyword, n=new_downloads: self._send_notification(f"New Wallpapers: {k}", f"Found {n} new wallpapers"))
+            else:
+                self.after(0, lambda k=keyword: self.status_var.set(f"📭 No new wallpapers for '{k}'"))
+                
+        except Exception as e:
+            error_msg = str(e)
+            logger.error(f"Keyword download error for {keyword}: {error_msg}")
+            self.after(0, lambda k=keyword, msg=error_msg[:50]: self.status_var.set(f"❌ Error searching '{k}': {msg}"))
 
     def run_startup_download(self):
-        if self._shutting_down:
-            return
         keywords = self.settings.get("startup_keywords", [])
         limit = self.settings.get("startup_limit_per_keyword", 10)
         if keywords:
             self.status_var.set(f"🚀 Startup: searching for new wallpapers for {len(keywords)} keywords...")
             for kw in keywords:
-                if self._shutting_down:
-                    break
-                self.executor.submit(self._download_keyword, kw, limit)
+                threading.Thread(target=self._download_keyword, args=(kw, limit), daemon=True).start()
                 time.sleep(1)
 
-    def _process_task_queue(self):
-        """Process background tasks from the queue"""
-        try:
-            while not self.task_queue.empty() and not self._shutting_down:
-                task = self.task_queue.get_nowait()
-                if callable(task):
-                    self.executor.submit(task)
-        except Empty:
-            pass
-        finally:
-            if not self._shutting_down:
-                self.after(100, self._process_task_queue)
-
     def _process_queue(self):
-        """Process the download queue with proper locking"""
-        if self._shutting_down:
-            return
-            
         with self.queue_lock:
             pending = [item for item in self.download_queue if item.get('status') == 'pending']
             if self.active_downloads < self.max_concurrent and pending:
                 item = pending[0]
                 item['status'] = 'active'
                 self.active_downloads += 1
-                self.executor.submit(self._download_with_retry, item.copy())
+                threading.Thread(target=self._download_with_retry, args=(item,), daemon=True).start()
         self.after(1000, self._process_queue)
 
     def _download_with_retry(self, item):
-        """Download with retry logic"""
         url = item['url']
         filename = item['filename']
         title = item.get('title', filename)
         max_retries = 3
+        base_delay = 2
 
-        for attempt in range(max_retries):
-            if SHUTDOWN_FLAG.is_set() or self._shutting_down:
-                with self.queue_lock:
-                    if item in self.download_queue:
-                        self.download_queue.remove(item)
-                self.active_downloads -= 1
-                return False
-                
+        for attempt in range(item.get('retries', 0), max_retries):
             try:
                 if self._do_download(url, filename, title):
-                    with self.queue_lock:
-                        if item in self.download_queue:
-                            self.download_queue.remove(item)
                     remove_from_persistent_queue(url)
+                    with self.queue_lock:
+                        self.download_queue.remove(item)
                     self.active_downloads -= 1
                     self.after(0, self._refresh_queue_display)
-                    return True
+                    return
+                raise Exception("Download failed")
             except Exception as e:
-                logger.error(f"Download attempt {attempt+1} failed for {filename}: {e}")
-                if attempt < max_retries - 1:
-                    delay = 2 ** (attempt + 1)  # Exponential backoff
-                    self.status_var.set(f"🔄 Retry {attempt+1}/{max_retries} for {filename[:30]} in {delay}s")
+                logger.error(f"Attempt {attempt+1} failed: {e}")
+                item['retries'] = attempt + 1
+                if attempt + 1 < max_retries:
+                    delay = base_delay ** (attempt + 1)
+                    self.after(0, lambda f=filename[:30], d=delay: self.status_var.set(f"🔄 Retrying {f} in {d}s"))
                     time.sleep(delay)
                 else:
-                    self.status_var.set(f"❌ Failed after {max_retries} attempts: {filename[:30]}")
-                    self._send_notification("Download Failed", title[:50], "critical")
-                    with self.queue_lock:
-                        if item in self.download_queue:
-                            self.download_queue.remove(item)
+                    self.after(0, lambda f=filename[:30]: self.status_var.set(f"❌ Failed: {f}"))
+                    self.after(0, lambda t=title[:50]: self._send_notification("Download Failed", t, "critical"))
                     remove_from_persistent_queue(url)
+                    with self.queue_lock:
+                        self.download_queue.remove(item)
                     self.active_downloads -= 1
                     self.after(0, self._refresh_queue_display)
-                    return False
+                    return
 
     def _do_download(self, url, filename, title):
-        """Perform the actual download"""
         org_mode = self.settings.get("org_mode", "detailed")
         if org_mode == "flat":
             filepath = Path(self.download_dir) / filename
@@ -1608,7 +1262,7 @@ class WallpaperCacheApp(ctk.CTk):
             filepath.parent.mkdir(parents=True, exist_ok=True)
 
         if filepath.exists():
-            self.after(0, lambda: self.status_var.set(f"⏭️ Already exists: {filename[:40]}"))
+            self.after(0, lambda f=filename[:40]: self.status_var.set(f"⏭️ Already exists: {f}"))
             return True
 
         try:
@@ -1616,39 +1270,27 @@ class WallpaperCacheApp(ctk.CTk):
             response.raise_for_status()
             total_size = int(response.headers.get('content-length', 0))
             downloaded = 0
-            
-            # Write to temporary file first to avoid corruption
-            temp_path = filepath.with_suffix('.tmp')
-            with open(temp_path, 'wb') as f:
+            with open(filepath, 'wb') as f:
                 for chunk in response.iter_content(chunk_size=8192):
-                    if SHUTDOWN_FLAG.is_set():
-                        temp_path.unlink(missing_ok=True)
-                        return False
                     if chunk:
                         f.write(chunk)
                         downloaded += len(chunk)
                         if total_size > 0:
                             percent = (downloaded / total_size) * 100
                             self.after(0, lambda p=percent: self.progress_bar.set(p/100))
-                            self.after(0, lambda p=percent: self.status_var.set(f"📥 {filename[:30]}... {p:.0f}%"))
-            
-            # Rename temp file to final name
-            temp_path.rename(filepath)
+                            self.after(0, lambda f=filename[:30], p=percent: self.status_var.set(f"📥 {f}... {p:.0f}%"))
 
             file_hash = hashlib.md5(filepath.read_bytes()).hexdigest()
-            add_download_record(filename, filepath, url, "Wallhaven", filepath.stat().st_size, file_hash)
+            add_download_to_history(filename, str(filepath), url, "Wallhaven", filepath.stat().st_size, file_hash)
 
             self.downloaded_urls.add(url)
-            self.after(0, lambda: self.status_var.set(f"✅ Downloaded: {filename[:40]}"))
+            self.after(0, lambda f=filename[:40]: self.status_var.set(f"✅ Downloaded: {f}"))
             self.after(0, self._refresh_history)
-            self._send_notification("Download Complete", title[:50], "low")
+            self.after(0, lambda t=title[:50]: self._send_notification("Download Complete", t, "low"))
             return True
         except Exception as e:
-            # Clean up temp file on error
-            if 'temp_path' in locals():
-                temp_path.unlink(missing_ok=True)
             logger.error(f"Download error: {e}")
-            raise  # Re-raise to trigger retry
+            return False
 
     # ------------------------------------------------------------------
     # Utility Functions
@@ -1662,10 +1304,7 @@ class WallpaperCacheApp(ctk.CTk):
             self.dir_label.configure(text=f"📁 Download folder: {self.download_dir}")
 
     def _open_folder(self):
-        try:
-            subprocess.run(['xdg-open', self.download_dir], check=False)
-        except Exception as e:
-            logger.error(f"Error opening folder: {e}")
+        subprocess.run(['xdg-open', self.download_dir])
 
     def _sanitize_filename(self, name):
         name = re.sub(r'[<>:"/\\|?*]', '_', name)
@@ -1676,14 +1315,10 @@ class WallpaperCacheApp(ctk.CTk):
         messagebox.showerror("Error", msg)
         self.status_var.set("❌ Error")
 
-    def __del__(self):
-        self.cleanup()
-
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--minimized", action="store_true")
     args = parser.parse_args()
-    
     app = WallpaperCacheApp()
     if args.minimized:
         app.withdraw()
@@ -1693,72 +1328,30 @@ if __name__ == "__main__":
     main()
 EOF
 
-    chmod +x "$INSTALL_DIR/wallpaper_cache.py"
-    print_success "Script created"
-}
+chmod +x "$INSTALL_DIR/wallpaper_cache.py"
+print_success "Script created"
 
-create_launcher() {
-    local de=$1
-    local display=$2
-    
-    print_info "Creating launcher for $de..."
-    
-    # Determine display settings
-    local display_env=""
-    local wayland_env=""
-    
-    if [[ "$de" == "niri" ]]; then
-        display_env=":0"
-        wayland_env="wayland-0"
-    elif [[ "$de" == "kde-plasma" ]]; then
-        display_env=":1"
-        wayland_env="wayland-0"
-    elif [[ "$de" == "kde-caelestia" ]]; then
-        display_env=":1"
-        wayland_env="wayland-0"
-    else
-        display_env=":0"
-        wayland_env="wayland-0"
-    fi
-    
-    cat > "$BIN_DIR/wallpaper-cache" << EOF
+# Step 6: Create launcher
+print_info "Step 6/8: Creating launcher..."
+
+cat > "$BIN_DIR/wallpaper-cache" << EOF
 #!/bin/bash
-# Wallpaper Cache Launcher for $de
-export DISPLAY=$display_env
-export WAYLAND_DISPLAY=$wayland_env
+# Wallpaper Cache Launcher
+export DISPLAY=:1
+export WAYLAND_DISPLAY=wayland-0
 export XDG_RUNTIME_DIR=/run/user/\$(id -u)
 
 source "$VENV_DIR/bin/activate"
 python "$INSTALL_DIR/wallpaper_cache.py" "\$@"
 EOF
 
-    chmod +x "$BIN_DIR/wallpaper-cache"
-    print_success "Launcher created at $BIN_DIR/wallpaper-cache"
-}
+chmod +x "$BIN_DIR/wallpaper-cache"
+print_success "Launcher created"
 
-configure_autostart() {
-    local de=$1
-    
-    print_info "Configuring auto-start for $de..."
-    
-    case "$de" in
-        niri)
-            if [ -f "$NIRI_CONFIG" ]; then
-                if ! grep -q "wallpaper-cache" "$NIRI_CONFIG"; then
-                    echo "" >> "$NIRI_CONFIG"
-                    echo "# Auto-start Wallpaper Cache" >> "$NIRI_CONFIG"
-                    echo "spawn-at-startup { command \"sh\" \"-c\" \"sleep 5 && $BIN_DIR/wallpaper-cache --minimized\"; }" >> "$NIRI_CONFIG"
-                    print_success "Added to Niri config"
-                else
-                    print_warning "Already in Niri config"
-                fi
-            else
-                print_warning "Niri config not found"
-            fi
-            ;;
-            
-        kde-plasma|kde-caelestia)
-            cat > "$AUTOSTART_DIR/wallpaper-cache.desktop" << EOF
+# Step 7: Configure autostart
+print_info "Step 7/8: Configuring autostart..."
+
+cat > "$AUTOSTART_DIR/wallpaper-cache.desktop" << EOF
 [Desktop Entry]
 Type=Application
 Name=Wallpaper Cache
@@ -1769,318 +1362,76 @@ X-GNOME-Autostart-enabled=true
 Comment=Download wallpapers automatically
 X-GNOME-Autostart-Delay=5
 EOF
-            print_success "Added to KDE autostart"
-            ;;
-            
-        *)
-            print_warning "Unknown desktop: $de"
-            ;;
-    esac
-}
 
-add_to_path() {
-    if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
-        echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.bashrc"
-        print_warning "Added ~/.local/bin to PATH. Please restart your shell or run: source ~/.bashrc"
-    fi
-}
+print_success "Autostart configured"
 
-# ============================================================
-# Bash Aliases
-# ============================================================
+# Step 8: Add Fish abbreviations
+print_info "Step 8/8: Adding Fish shell abbreviations..."
 
-add_bash_aliases() {
-    print_info "Adding Bash aliases..."
-    
-    # Determine which bash config file to use
-    local bash_config=""
-    if [ -f "$BASH_ALIASES" ]; then
-        bash_config="$BASH_ALIASES"
-    elif [ -f "$BASH_CONFIG" ]; then
-        bash_config="$BASH_CONFIG"
+# Check if Fish config exists
+if [ -f "$FISH_CONFIG" ]; then
+    if grep -q "wallpaper-cache" "$FISH_CONFIG"; then
+        print_warning "Fish abbreviations already exist"
     else
-        print_warning "No bash config file found. Creating $BASH_CONFIG..."
-        bash_config="$BASH_CONFIG"
-        touch "$bash_config"
+        echo "" >> "$FISH_CONFIG"
+        echo "# ============================================================" >> "$FISH_CONFIG"
+        echo "# Wallpaper Cache Abbreviations" >> "$FISH_CONFIG"
+        echo "# ============================================================" >> "$FISH_CONFIG"
+        echo "abbr -a wc \"$BIN_DIR/wallpaper-cache\"" >> "$FISH_CONFIG"
+        echo "abbr -a wcm \"$BIN_DIR/wallpaper-cache --minimized\"" >> "$FISH_CONFIG"
+        echo "abbr -a wcl \"tail -f $CONFIG_DIR/app.log\"" >> "$FISH_CONFIG"
+        echo "abbr -a wck \"pkill -f wallpaper_cache.py\"" >> "$FISH_CONFIG"
+        echo "abbr -a wcs \"systemctl --user status wallpaper-cache.service\"" >> "$FISH_CONFIG"
+        echo "abbr -a wcr \"systemctl --user restart wallpaper-cache.service\"" >> "$FISH_CONFIG"
+        echo "abbr -a wcf \"cd $CONFIG_DIR\"" >> "$FISH_CONFIG"
+        echo "abbr -a wcd \"cd ~/Pictures/WallpaperCache\"" >> "$FISH_CONFIG"
+        print_success "Fish abbreviations added"
     fi
-    
-    # Check if aliases already exist
-    if grep -q "alias wc=" "$bash_config" 2>/dev/null; then
-        print_warning "Bash aliases already exist in $bash_config"
-        return
-    fi
-    
-    # Add aliases to bash config
-    echo "" >> "$bash_config"
-    echo "# ============================================================" >> "$bash_config"
-    echo "# Wallpaper Cache Aliases" >> "$bash_config"
-    echo "# ============================================================" >> "$bash_config"
-    echo "alias wc=\"$BIN_DIR/wallpaper-cache\"" >> "$bash_config"
-    echo "alias wcm=\"$BIN_DIR/wallpaper-cache --minimized\"" >> "$bash_config"
-    echo "alias wcl=\"tail -f $CONFIG_DIR/app.log\"" >> "$bash_config"
-    echo "alias wck=\"pkill -f wallpaper_cache.py\"" >> "$bash_config"
-    echo "alias wcs=\"systemctl --user status wallpaper-cache.service\"" >> "$bash_config"
-    echo "alias wcr=\"systemctl --user restart wallpaper-cache.service\"" >> "$bash_config"
-    echo "alias wcf=\"cd $CONFIG_DIR\"" >> "$bash_config"
-    echo "alias wcd=\"cd ~/Pictures/WallpaperCache\"" >> "$bash_config"
-    
-    print_success "Bash aliases added to $bash_config"
-    print_info "Available aliases:"
-    echo "  wc  - Start Wallpaper Cache"
-    echo "  wcm - Start Wallpaper Cache (minimized)"
-    echo "  wcl - View logs"
-    echo "  wck - Kill the app"
-    echo "  wcs - Check service status"
-    echo "  wcr - Restart service"
-    echo "  wcf - Go to config directory"
-    echo "  wcd - Go to downloads directory"
-    
-    # Source the config file if it's the current shell
-    if [[ "$bash_config" == "$BASH_CONFIG" ]] && [ -n "$BASH_VERSION" ]; then
-        print_info "To apply aliases in current shell: source $bash_config"
-    fi
-}
+else
+    print_warning "Fish config not found at $FISH_CONFIG"
+    echo ""
+    echo "Add these to your Fish config manually:"
+    echo "  abbr -a wc \"$BIN_DIR/wallpaper-cache\""
+    echo "  abbr -a wcm \"$BIN_DIR/wallpaper-cache --minimized\""
+    echo "  abbr -a wcl \"tail -f $CONFIG_DIR/app.log\""
+    echo "  abbr -a wck \"pkill -f wallpaper_cache.py\""
+fi
 
 # ============================================================
-# Fish Shell Abbreviations
+# Summary
 # ============================================================
+echo ""
+echo "╔═══════════════════════════════════════════════════════════╗"
+echo "║                                                         ║"
+echo "║   ✅ INSTALLATION COMPLETE!                            ║"
+echo "║                                                         ║"
+echo "╚═══════════════════════════════════════════════════════════╝"
+echo ""
+echo "  📁 Script: $INSTALL_DIR/wallpaper_cache.py"
+echo "  🎯 Launcher: $BIN_DIR/wallpaper-cache"
+echo "  ⚙️  Config: $CONFIG_DIR"
+echo "  🐟 Fish abbreviations added"
+echo ""
+echo "  🚀 To start: $BIN_DIR/wallpaper-cache"
+echo "  🖥️  Minimized: $BIN_DIR/wallpaper-cache --minimized"
+echo ""
+echo "  🐟 Fish abbreviations:"
+echo "     wc  - Start Wallpaper Cache"
+echo "     wcm - Start minimized"
+echo "     wcl - View logs"
+echo "     wck - Kill app"
+echo "     wcs - Check service status"
+echo "     wcr - Restart service"
+echo "     wcf - Go to config directory"
+echo "     wcd - Go to downloads directory"
+echo ""
+echo "  📝 Check logs: wcl"
+echo ""
 
-add_fish_abbreviations() {
-    print_info "Adding Fish shell abbreviations..."
-    
-    # Check if Fish config exists
-    if [ -f "$FISH_CONFIG" ]; then
-        # Check if abbreviations already exist with proper pattern matching
-        if grep -q "abbr.*wallpaper-cache" "$FISH_CONFIG" 2>/dev/null; then
-            print_warning "Fish abbreviations already exist in config"
-        else
-            # Add abbreviations to Fish config
-            echo "" >> "$FISH_CONFIG"
-            echo "# ============================================================" >> "$FISH_CONFIG"
-            echo "# Wallpaper Cache Abbreviations" >> "$FISH_CONFIG"
-            echo "# ============================================================" >> "$FISH_CONFIG"
-            echo "abbr -a wc \"$BIN_DIR/wallpaper-cache\"" >> "$FISH_CONFIG"
-            echo "abbr -a wcm \"$BIN_DIR/wallpaper-cache --minimized\"" >> "$FISH_CONFIG"
-            echo "abbr -a wcl \"tail -f $CONFIG_DIR/app.log\"" >> "$FISH_CONFIG"
-            echo "abbr -a wck \"pkill -f wallpaper_cache.py\"" >> "$FISH_CONFIG"
-            echo "abbr -a wcs \"systemctl --user status wallpaper-cache.service\"" >> "$FISH_CONFIG"
-            echo "abbr -a wcr \"systemctl --user restart wallpaper-cache.service\"" >> "$FISH_CONFIG"
-            echo "abbr -a wcf \"cd $CONFIG_DIR\"" >> "$FISH_CONFIG"
-            echo "abbr -a wcd \"cd ~/Pictures/WallpaperCache\"" >> "$FISH_CONFIG"
-            
-            print_success "Fish abbreviations added to $FISH_CONFIG"
-            print_info "Available abbreviations:"
-            echo "  wc  - Start Wallpaper Cache"
-            echo "  wcm - Start Wallpaper Cache (minimized)"
-            echo "  wcl - View logs"
-            echo "  wck - Kill the app"
-            echo "  wcs - Check service status"
-            echo "  wcr - Restart service"
-            echo "  wcf - Go to config directory"
-            echo "  wcd - Go to downloads directory"
-        fi
-    else
-        print_warning "Fish config not found at $FISH_CONFIG"
-        print_info "Create it manually with:"
-        echo ""
-        echo "  # Add to ~/.config/fish/config.fish"
-        echo "  abbr -a wc \"$BIN_DIR/wallpaper-cache\""
-        echo "  abbr -a wcm \"$BIN_DIR/wallpaper-cache --minimized\""
-    fi
-}
-
-# ============================================================
-# Shell Integration (Main Function)
-# ============================================================
-
-setup_shell_integration() {
-    local current_shell=$(detect_shell)
-    local de=$1
-    
-    print_info "Setting up shell integration for $current_shell..."
-    
-    # Add bash aliases (always add for bash)
-    if [[ "$current_shell" == "bash" ]] || [[ -f "$BASH_CONFIG" ]]; then
-        add_bash_aliases
-    fi
-    
-    # Add fish abbreviations (always add for fish)
-    if [[ "$current_shell" == "fish" ]] || [[ -f "$FISH_CONFIG" ]]; then
-        add_fish_abbreviations
-    fi
-    
-    # If KDE Caelestia is detected, ensure fish abbreviations are added
-    if [[ "$de" == "kde-caelestia" ]]; then
-        print_info "KDE Caelestia detected - ensuring Fish shell support..."
-        if [[ "$current_shell" != "fish" ]]; then
-            print_info "Current shell is $current_shell, but Caelestia uses Fish by default"
-            print_info "Adding Fish abbreviations as well..."
-            add_fish_abbreviations
-        fi
-    fi
-    
-    # If Niri is detected, ensure bash aliases are added
-    if [[ "$de" == "niri" ]]; then
-        print_info "Niri detected - ensuring Bash shell support..."
-        if [[ "$current_shell" != "bash" ]]; then
-            print_info "Current shell is $current_shell, but Niri uses Bash by default"
-            print_info "Adding Bash aliases as well..."
-            add_bash_aliases
-        fi
-    fi
-    
-    print_success "Shell integration complete!"
-}
-
-# ============================================================
-# Interactive Desktop Selection
-# ============================================================
-
-select_desktop() {
-    clear
-    echo ""
-    echo "╔═══════════════════════════════════════════════════════════╗"
-    echo "║                                                         ║"
-    echo "║   🖥️  SELECT DESKTOP ENVIRONMENT                        ║"
-    echo "║                                                         ║"
-    echo "╚═══════════════════════════════════════════════════════════╝"
-    echo ""
-    echo "  1) Niri (Wayland) - ${GREEN}Recommended${NC} - Uses Bash"
-    echo "  2) KDE Plasma (Wayland) - Uses Bash"
-    echo "  3) KDE Plasma Caelestia (Wayland) - Uses Fish"
-    echo "  4) Auto-detect (try to detect automatically)"
-    echo ""
-    echo "  Detected: $(detect_desktop)"
-    echo "  Shell: $(detect_shell)"
-    echo ""
-    read -p "Select option [1-4]: " choice
-    
-    # Validate input
-    if [[ ! "$choice" =~ ^[1-4]$ ]]; then
-        print_error "Invalid choice. Using auto-detect..."
-        choice=4
-    fi
-    
-    case $choice in
-        1) echo "niri" ;;
-        2) echo "kde-plasma" ;;
-        3) echo "kde-caelestia" ;;
-        4) echo "$(detect_desktop)" ;;
-    esac
-}
-
-# ============================================================
-# Main Script
-# ============================================================
-
-main() {
-    clear
-    echo ""
-    echo "╔═══════════════════════════════════════════════════════════╗"
-    echo "║                                                         ║"
-    echo "║   🖼️  Wallpaper Cache - Universal Installer v2.3        ║"
-    echo "║                                                         ║"
-    echo "║   Auto-download wallpapers for Niri & KDE Plasma       ║"
-    echo "║   + Bash aliases & Fish abbreviations                  ║"
-    echo "║                                                         ║"
-    echo "╚═══════════════════════════════════════════════════════════╝"
-    echo ""
-    
-    # Detect or select desktop
-    local detected_de=$(detect_desktop)
-    local detected_shell=$(detect_shell)
-    
-    print_info "Detected desktop: $detected_de"
-    print_info "Detected shell: $detected_shell"
-    echo ""
-    
-    if [[ "$detected_de" != "unknown" ]]; then
-        read -p "Use detected desktop? (y/n): " -n 1 -r
-        echo ""
-        if [[ $REPLY =~ ^[Yy]$ ]]; then
-            local DE="$detected_de"
-        else
-            local DE=$(select_desktop)
-        fi
-    else
-        print_warning "Could not detect desktop environment"
-        local DE=$(select_desktop)
-    fi
-    
-    if [[ "$DE" == "unknown" ]]; then
-        print_error "Could not determine desktop. Please select manually."
-        local DE=$(select_desktop)
-    fi
-    
-    print_info "Installing for: $GREEN$DE$NC"
-    echo ""
-    
-    # Run installation
-    install_dependencies
-    create_directories
-    create_virtual_env
-    install_python_packages
-    create_script
-    create_launcher "$DE"
-    configure_autostart "$DE"
-    add_to_path
-    
-    # Setup shell integration (Bash aliases and Fish abbreviations)
-    setup_shell_integration "$DE"
-    
-    # Summary
-    echo ""
-    echo "╔═══════════════════════════════════════════════════════════╗"
-    echo "║                                                         ║"
-    echo "║   ✅ INSTALLATION COMPLETE!                            ║"
-    echo "║                                                         ║"
-    echo "╚═══════════════════════════════════════════════════════════╝"
-    echo ""
-    echo "  📁 Script: $INSTALL_DIR/wallpaper_cache.py"
-    echo "  🎯 Launcher: $BIN_DIR/wallpaper-cache"
-    echo "  ⚙️  Config: $CONFIG_DIR"
-    echo "  🖥️  Desktop: $DE"
-    echo "  🐚  Shell: $detected_shell"
-    echo ""
-    echo "  🚀 To start: $BIN_DIR/wallpaper-cache"
-    echo "  🖥️  Minimized: $BIN_DIR/wallpaper-cache --minimized"
-    echo ""
-    echo "  📝 Shell Aliases/Abbreviations:"
-    echo "     wc  - Start Wallpaper Cache"
-    echo "     wcm - Start Wallpaper Cache (minimized)"
-    echo "     wcl - View logs"
-    echo "     wck - Kill the app"
-    echo "     wcs - Check service status"
-    echo "     wcr - Restart service"
-    echo "     wcf - Go to config directory"
-    echo "     wcd - Go to downloads directory"
-    echo ""
-    
-    # Show shell-specific reload instructions
-    if [[ "$detected_shell" == "bash" ]]; then
-        echo "  💡 To apply aliases in current shell:"
-        echo "     source ~/.bashrc  (or ~/.bash_aliases)"
-    elif [[ "$detected_shell" == "fish" ]]; then
-        echo "  💡 To apply abbreviations in current shell:"
-        echo "     exec fish"
-    fi
-    echo ""
-    
-    # Ask to start
-    read -p "Start Wallpaper Cache now? (y/n): " -n 1 -r
-    echo ""
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
-        "$BIN_DIR/wallpaper-cache" --minimized &
-        print_success "Wallpaper Cache started!"
-        echo ""
-        echo "  📝 Check logs: tail -f $CONFIG_DIR/app.log"
-    fi
-    
-    echo ""
-    echo "  ✨ For Fish users:"
-    echo "     Your abbreviations will work after restarting Fish: exec fish"
-    echo ""
-}
-
-# Run main
-main
+# Ask to start
+read -p "Start Wallpaper Cache now? (y/n): " -n 1 -r
+echo ""
+if [[ $REPLY =~ ^[Yy]$ ]]; then
+    "$BIN_DIR/wallpaper-cache" --minimized &
+    print_success "Wallpaper Cache started!"
+fi
